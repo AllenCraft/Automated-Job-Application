@@ -66,3 +66,14 @@ model Application {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
+
+model JobSource {
+  id        String   @id @default(cuid())
+  name      String
+  url       String   @unique
+  type      String   @default("RSS") // RSS, API, SCRAPE
+  isActive  Boolean  @default(true)
+  isAiFound Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

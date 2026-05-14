@@ -95,6 +95,24 @@ export async function fetchJobspressoJobs(): Promise<JobData[]> {
   }
 }
 
+export async function fetchGenericRSSJobs(sourceName: string, url: string): Promise<JobData[]> {
+  try {
+    const feed = await parser.parseURL(url);
+    return feed.items.map((item: any) => ({
+      externalId: `${sourceName.toLowerCase()}-${item.guid || item.link}`,
+      source: sourceName,
+      title: item.title || 'Unknown Title',
+      company: item.creator || 'Unknown',
+      description: item.content || item.contentSnippet || '',
+      location: 'Remote',
+      applyUrl: item.link || '',
+    }));
+  } catch (error) {
+    console.error(`Error fetching jobs from RSS ${sourceName}:`, error);
+    return [];
+  }
+}
+
 export async function discoverAndSaveJobs() {
   console.log('Discovering and scoring jobs...');
 
@@ -102,14 +120,26 @@ export async function discoverAndSaveJobs() {
   const profile = await prisma.candidateProfile.findFirst();
   const parsedResume = profile?.parsedResume ? JSON.parse(profile.parsedResume) : null;
 
-  const sources = [
-    fetchRemoteOKJobs(),
-    fetchWWRJobs(),
-    fetchRemotiveJobs(),
-    fetchJobspressoJobs(),
-  ];
+  // Get active sources from DB
+  const dbSources = await prisma.jobSource.findMany({ where: { isActive: true } });
 
-  const results = await Promise.all(sources);
+  const tasks: Promise<JobData[]>[] = [];
+
+  for (const source of dbSources) {
+    if (source.name === 'RemoteOK') {
+      tasks.push(fetchRemoteOKJobs());
+    } else if (source.name === 'WWR') {
+      tasks.push(fetchWWRJobs());
+    } else if (source.name === 'Remotive') {
+      tasks.push(fetchRemotiveJobs());
+    } else if (source.name === 'Jobspresso') {
+      tasks.push(fetchJobspressoJobs());
+    } else if (source.type === 'RSS') {
+      tasks.push(fetchGenericRSSJobs(source.name, source.url));
+    }
+  }
+
+  const results = await Promise.all(tasks);
   const allJobs = results.flat();
   console.log(`Found ${allJobs.length} jobs in total.`);
 
