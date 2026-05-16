@@ -2,8 +2,38 @@ import axios from 'axios';
 import Parser from 'rss-parser';
 import prisma from '../prisma';
 import { scoreJob } from './aiService';
+import robotsParser from 'robots-parser';
 
 const parser = new Parser();
+
+const robotsCache = new Map<string, boolean>();
+
+async function isAllowedToCrawl(url: string): Promise<boolean> {
+  try {
+    const { origin } = new URL(url);
+    if (robotsCache.has(origin)) {
+      return robotsCache.get(origin)!;
+    }
+    const robotsUrl = `${origin}/robots.txt`;
+    const response = await fetch(robotsUrl, {
+      headers: { 'User-Agent': 'JobSearchBot/1.0 (personal job search automation)' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      robotsCache.set(origin, true);
+      return true;
+    }
+    const text = await response.text();
+    const robots = robotsParser(robotsUrl, text);
+    const allowed = robots.isAllowed(url, 'JobSearchBot') ?? true;
+    robotsCache.set(origin, allowed);
+    return allowed;
+  } catch {
+    return true;
+  }
+}
+
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export interface JobData {
   externalId: string;
@@ -18,8 +48,14 @@ export interface JobData {
 }
 
 export async function fetchRemoteOKJobs(): Promise<JobData[]> {
+  const sourceUrl = 'https://remoteok.com/api';
+  const allowed = await isAllowedToCrawl(sourceUrl);
+  if (!allowed) {
+    console.warn(`Skipping ${sourceUrl} — disallowed by robots.txt`);
+    return [];
+  }
   try {
-    const response = await axios.get('https://remoteok.com/api');
+    const response = await axios.get(sourceUrl);
     const jobs = response.data.slice(1);
     return jobs.map((job: any) => ({
       externalId: `remoteok-${job.id}`,
@@ -39,8 +75,14 @@ export async function fetchRemoteOKJobs(): Promise<JobData[]> {
 }
 
 export async function fetchWWRJobs(): Promise<JobData[]> {
+  const sourceUrl = 'https://weworkremotely.com/remote-jobs.rss';
+  const allowed = await isAllowedToCrawl(sourceUrl);
+  if (!allowed) {
+    console.warn(`Skipping ${sourceUrl} — disallowed by robots.txt`);
+    return [];
+  }
   try {
-    const feed = await parser.parseURL('https://weworkremotely.com/remote-jobs.rss');
+    const feed = await parser.parseURL(sourceUrl);
     return feed.items.map((item: any) => ({
       externalId: `wwr-${item.guid || item.link}`,
       source: 'WWR',
@@ -57,8 +99,14 @@ export async function fetchWWRJobs(): Promise<JobData[]> {
 }
 
 export async function fetchRemotiveJobs(): Promise<JobData[]> {
+  const sourceUrl = 'https://remotive.com/api/remote-jobs';
+  const allowed = await isAllowedToCrawl(sourceUrl);
+  if (!allowed) {
+    console.warn(`Skipping ${sourceUrl} — disallowed by robots.txt`);
+    return [];
+  }
   try {
-    const response = await axios.get('https://remotive.com/api/remote-jobs');
+    const response = await axios.get(sourceUrl);
     const jobs = response.data.jobs;
     return jobs.map((job: any) => ({
       externalId: `remotive-${job.id}`,
@@ -78,8 +126,14 @@ export async function fetchRemotiveJobs(): Promise<JobData[]> {
 }
 
 export async function fetchJobspressoJobs(): Promise<JobData[]> {
+  const sourceUrl = 'https://jobspresso.co/feed/';
+  const allowed = await isAllowedToCrawl(sourceUrl);
+  if (!allowed) {
+    console.warn(`Skipping ${sourceUrl} — disallowed by robots.txt`);
+    return [];
+  }
   try {
-    const feed = await parser.parseURL('https://jobspresso.co/feed/');
+    const feed = await parser.parseURL(sourceUrl);
     return feed.items.map((item: any) => ({
       externalId: `jobspresso-${item.guid || item.link}`,
       source: 'Jobspresso',
@@ -96,6 +150,11 @@ export async function fetchJobspressoJobs(): Promise<JobData[]> {
 }
 
 export async function fetchGenericRSSJobs(sourceName: string, url: string): Promise<JobData[]> {
+  const allowed = await isAllowedToCrawl(url);
+  if (!allowed) {
+    console.warn(`Skipping ${url} — disallowed by robots.txt`);
+    return [];
+  }
   try {
     const feed = await parser.parseURL(url);
     return feed.items.map((item: any) => ({
@@ -123,23 +182,33 @@ export async function discoverAndSaveJobs() {
   // Get active sources from DB
   const dbSources = await prisma.jobSource.findMany({ where: { isActive: true } });
 
-  const tasks: Promise<JobData[]>[] = [];
+  const results: JobData[][] = [];
+  const domainLastRequest = new Map<string, number>();
 
   for (const source of dbSources) {
-    if (source.name === 'RemoteOK') {
-      tasks.push(fetchRemoteOKJobs());
-    } else if (source.name === 'WWR') {
-      tasks.push(fetchWWRJobs());
-    } else if (source.name === 'Remotive') {
-      tasks.push(fetchRemotiveJobs());
-    } else if (source.name === 'Jobspresso') {
-      tasks.push(fetchJobspressoJobs());
-    } else if (source.type === 'RSS') {
-      tasks.push(fetchGenericRSSJobs(source.name, source.url));
+    const { origin } = new URL(source.url);
+    const lastRequest = domainLastRequest.get(origin) || 0;
+    const now = Date.now();
+    if (now - lastRequest < 1000) {
+      await delay(1000 - (now - lastRequest));
     }
-  }
 
-  const results = await Promise.all(tasks);
+    let jobs: JobData[] = [];
+    if (source.name === 'RemoteOK') {
+      jobs = await fetchRemoteOKJobs();
+    } else if (source.name === 'WWR') {
+      jobs = await fetchWWRJobs();
+    } else if (source.name === 'Remotive') {
+      jobs = await fetchRemotiveJobs();
+    } else if (source.name === 'Jobspresso') {
+      jobs = await fetchJobspressoJobs();
+    } else if (source.type === 'RSS') {
+      jobs = await fetchGenericRSSJobs(source.name, source.url);
+    }
+
+    results.push(jobs);
+    domainLastRequest.set(origin, Date.now());
+  }
   const allJobs = results.flat();
   console.log(`Found ${allJobs.length} jobs in total.`);
 

@@ -1,4 +1,6 @@
 import { chromium } from 'playwright';
+import prisma from '../prisma';
+import { generateCoverLetter, optimizeResume } from './aiService';
 
 export interface ApplicationProfile {
   firstName: string;
@@ -9,6 +11,63 @@ export interface ApplicationProfile {
   linkedIn?: string;
   github?: string;
   website?: string;
+}
+
+export async function prepareApplicationReview(jobId: string) {
+  const job = await prisma.job.findUnique({ where: { id: jobId } });
+  const profile = await prisma.candidateProfile.findFirst();
+
+  if (!job || !profile) {
+    throw new Error('Job or profile not found');
+  }
+
+  const parsedResume = profile.parsedResume ? JSON.parse(profile.parsedResume) : null;
+
+  const coverLetter = await generateCoverLetter(parsedResume, job.description);
+  const optimizedCv = await optimizeResume(parsedResume, job.description);
+
+  return await prisma.application.create({
+    data: {
+      userId: profile.userId,
+      jobId: job.id,
+      status: 'pending_review',
+      coverLetter,
+      optimizedCv: JSON.stringify(optimizedCv),
+    },
+    include: { job: true }
+  });
+}
+
+export async function submitApplication(applicationId: string) {
+  const application = await prisma.application.findUnique({
+    where: { id: applicationId },
+    include: { job: true, user: { include: { candidateProfile: true } } }
+  });
+
+  if (!application) throw new Error('Application not found');
+  if (application.status !== 'approved') throw new Error('Application must be approved before submission');
+
+  const profile = application.user.candidateProfile;
+  const parsedResume = profile?.parsedResume ? JSON.parse(profile.parsedResume) : {};
+
+  const appProfile: ApplicationProfile = {
+    firstName: parsedResume.name?.split(' ')[0] || application.user.name?.split(' ')[0] || 'John',
+    lastName: parsedResume.name?.split(' ').slice(1).join(' ') || application.user.name?.split(' ').slice(1).join(' ') || 'Doe',
+    email: application.user.email,
+    phone: profile?.timezone || '0000000000',
+  };
+
+  const result = await applyToGreenhouse(application.job.applyUrl, appProfile, false);
+
+  await prisma.application.update({
+    where: { id: applicationId },
+    data: {
+      status: result.success ? 'submitted' : 'failed',
+      logs: result.message,
+    }
+  });
+
+  return result;
 }
 
 export async function applyToGreenhouse(jobUrl: string, profile: ApplicationProfile, dryRun: boolean = true) {

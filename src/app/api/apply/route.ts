@@ -1,39 +1,43 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { applyToGreenhouse } from '@/lib/services/applyService';
+import { prepareApplicationReview, submitApplication } from '@/lib/services/applyService';
+
+export async function GET() {
+  try {
+    const applications = await prisma.application.findMany({
+      include: { job: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return NextResponse.json(applications);
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
 
 export async function POST(req: Request) {
   try {
-    const { jobId } = await req.json();
-    const job = await prisma.job.findUnique({ where: { id: jobId } });
-    const profile = await prisma.candidateProfile.findFirst();
+    const { jobId, applicationId, action } = await req.json();
 
-    if (!job || !profile) {
-      return NextResponse.json({ error: 'Job or profile not found' }, { status: 404 });
+    if (action === 'approve') {
+      await prisma.application.update({
+        where: { id: applicationId },
+        data: { status: 'approved' }
+      });
+      const result = await submitApplication(applicationId);
+      return NextResponse.json(result);
     }
 
-    const parsedResume = profile.parsedResume ? JSON.parse(profile.parsedResume) : {};
-    const user = await prisma.user.findUnique({ where: { id: profile.userId } });
+    if (action === 'reject') {
+      await prisma.application.update({
+        where: { id: applicationId },
+        data: { status: 'rejected' }
+      });
+      return NextResponse.json({ success: true, message: 'Application rejected' });
+    }
 
-    const appProfile = {
-        firstName: parsedResume.name?.split(' ')[0] || user?.name?.split(' ')[0] || 'John',
-        lastName: parsedResume.name?.split(' ').slice(1).join(' ') || user?.name?.split(' ').slice(1).join(' ') || 'Doe',
-        email: user?.email || 'user@example.com',
-        phone: profile.timezone || '0000000000', // Timezone was used as a placeholder in UI, better to add phone field
-    };
-
-    const result = await applyToGreenhouse(job.applyUrl, appProfile, true);
-
-    await prisma.application.create({
-      data: {
-        userId: profile.userId,
-        jobId: job.id,
-        status: result.success ? 'APPLIED' : 'FAILED',
-        logs: result.message,
-      }
-    });
-
-    return NextResponse.json(result);
+    // Default: prepare for review
+    const application = await prepareApplicationReview(jobId);
+    return NextResponse.json({ success: true, message: 'Prepared for review', application });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

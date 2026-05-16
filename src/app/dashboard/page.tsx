@@ -5,8 +5,19 @@ import { ExternalLink, Search, RefreshCw, Star, Award, CheckCircle } from 'lucid
 
 export default function DashboardPage() {
   const [jobs, setJobs] = useState<any[]>([]);
+  const [applications, setApplications] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const fetchApplications = async () => {
+    try {
+      const res = await fetch('/api/apply');
+      const data = await res.json();
+      setApplications(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error(error);
+    }
+  };
 
   const fetchJobs = async () => {
     setIsLoading(true);
@@ -23,6 +34,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchJobs();
+    fetchApplications();
   }, []);
 
   const handleRefresh = async () => {
@@ -37,7 +49,7 @@ export default function DashboardPage() {
     }
   };
 
-  const handleApply = async (jobId: string) => {
+  const handlePrepareReview = async (jobId: string) => {
     try {
       const res = await fetch('/api/apply', {
         method: 'POST',
@@ -46,13 +58,32 @@ export default function DashboardPage() {
       });
       const result = await res.json();
       if (result.success) {
-        alert('Application simulation successful (Dry Run)!');
-        fetchJobs();
+        alert('Application prepared for review!');
+        fetchApplications();
       } else {
-        alert('Application failed: ' + result.message);
+        alert('Failed: ' + result.message);
       }
     } catch (error) {
-      alert('Error during application');
+      alert('Error');
+    }
+  };
+
+  const handleReviewAction = async (applicationId: string, action: 'approve' | 'reject') => {
+    try {
+      const res = await fetch('/api/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ applicationId, action }),
+      });
+      const result = await res.json();
+      if (result.success) {
+        alert(action === 'approve' ? 'Application submitted!' : 'Application rejected.');
+        fetchApplications();
+      } else {
+        alert('Action failed: ' + result.message);
+      }
+    } catch (error) {
+      alert('Error');
     }
   };
 
@@ -62,6 +93,8 @@ export default function DashboardPage() {
     'Class C': jobs.filter(j => j.category === 'Class C'),
     'Uncategorized': jobs.filter(j => !j.category)
   };
+
+  const pendingReviews = applications.filter(a => a.status === 'pending_review');
 
   return (
     <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
@@ -79,6 +112,47 @@ export default function DashboardPage() {
             </button>
           </div>
         </div>
+
+        {pendingReviews.length > 0 && (
+          <div className="mb-10">
+            <h2 className="text-xl font-bold mb-4 text-purple-700 flex items-center">
+              <RefreshCw className="mr-2 h-5 w-5" /> Pending Approval ({pendingReviews.length})
+            </h2>
+            <div className="grid grid-cols-1 gap-4">
+              {pendingReviews.map((app) => (
+                <div key={app.id} className="bg-white shadow rounded-lg p-6 border-l-4 border-purple-500">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-900">{app.job.title}</h3>
+                      <p className="text-sm text-gray-500">{app.job.company} • Match Score: <span className="font-bold text-green-600">{app.job.score}%</span></p>
+
+                      <div className="mt-4">
+                        <h4 className="text-xs font-semibold uppercase text-gray-400">Generated Cover Letter</h4>
+                        <div className="mt-1 p-3 bg-gray-50 rounded text-sm text-gray-600 italic whitespace-pre-wrap">
+                          {app.coverLetter}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex flex-col space-y-2">
+                      <button
+                        onClick={() => handleReviewAction(app.id, 'approve')}
+                        className="bg-green-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-green-700"
+                      >
+                        Approve & Submit
+                      </button>
+                      <button
+                        onClick={() => handleReviewAction(app.id, 'reject')}
+                        className="bg-red-50 text-red-600 px-4 py-2 rounded-md text-sm font-medium hover:bg-red-100"
+                      >
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-3 mb-8">
           <div className="bg-white p-5 shadow rounded-lg border-l-4 border-yellow-400">
@@ -152,14 +226,14 @@ export default function DashboardPage() {
                             <ExternalLink className="h-5 w-5" />
                           </a>
                           <button
-                              onClick={() => handleApply(job.id)}
+                              onClick={() => handlePrepareReview(job.id)}
                               className={`px-4 py-1.5 rounded-md text-sm font-medium transition ${
                                 category === 'Class A' ? 'bg-yellow-500 text-white hover:bg-yellow-600' :
                                 category === 'Class B' ? 'bg-blue-500 text-white hover:bg-blue-600' :
                                 'bg-gray-200 text-gray-800 hover:bg-gray-300'
                               }`}
                           >
-                              Apply (Dry Run)
+                              Prepare Application
                           </button>
                         </div>
                       </div>

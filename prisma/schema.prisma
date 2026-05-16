@@ -35,6 +35,14 @@ model CandidateProfile {
   updatedAt         DateTime @updatedAt
 }
 
+enum ApplicationStatus {
+  pending_review
+  approved
+  submitted
+  failed
+  rejected
+}
+
 model Job {
   id          String   @id @default(cuid())
   externalId  String   @unique
@@ -55,16 +63,17 @@ model Job {
 }
 
 model Application {
-  id           String   @id @default(cuid())
+  id           String            @id @default(cuid())
   userId       String
-  user         User     @relation(fields: [userId], references: [id])
+  user         User              @relation(fields: [userId], references: [id])
   jobId        String
-  job          Job      @relation(fields: [jobId], references: [id])
-  status       String   @default("DISCOVERED") // DISCOVERED, MATCHED, APPLYING, APPLIED, FAILED
+  job          Job               @relation(fields: [jobId], references: [id])
+  status       ApplicationStatus @default(pending_review)
   coverLetter  String?
-  logs         String?  // For automation logs
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  optimizedCv  String? // Truthfully optimized CV for this specific application
+  logs         String? // For automation logs
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
 }
 
 model JobSource {
