@@ -1,0 +1,88 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String            @id @default(cuid())
+  email            String            @unique
+  name             String?
+  candidateProfile CandidateProfile?
+  applications     Application[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}
+
+model CandidateProfile {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id])
+  resumeText        String?
+  parsedResume      String?  // JSON string
+  skills            String?  // Comma separated
+  experienceLevel   String?
+  salaryPreference  String?
+  timezone          String?
+  preferredIndustries String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+enum ApplicationStatus {
+  pending_review
+  approved
+  submitted
+  failed
+  rejected
+}
+
+model Job {
+  id          String   @id @default(cuid())
+  externalId  String   @unique
+  source      String   // e.g., "RemoteOK", "WWR"
+  title       String
+  company     String
+  description String
+  location    String?
+  salary      String?
+  tags        String?
+  applyUrl    String
+  score       Float?
+  category    String?  // Class A, B, C
+  suitability String?  // Explanation of the score
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  applications Application[]
+}
+
+model Application {
+  id           String            @id @default(cuid())
+  userId       String
+  user         User              @relation(fields: [userId], references: [id])
+  jobId        String
+  job          Job               @relation(fields: [jobId], references: [id])
+  status       ApplicationStatus @default(pending_review)
+  coverLetter  String?
+  optimizedCv  String? // Truthfully optimized CV for this specific application
+  logs         String? // For automation logs
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+}
+
+model JobSource {
+  id        String   @id @default(cuid())
+  name      String
+  url       String   @unique
+  type      String   @default("RSS") // RSS, API, SCRAPE
+  isActive  Boolean  @default(true)
+  isAiFound Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
